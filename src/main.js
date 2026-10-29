@@ -10,18 +10,21 @@ export default async ({ req, res, log, error }) => {
       );
     }
 
-    let body;
+   let body;
 
-    try {
-      body = typeof req.body === "string"
-        ? JSON.parse(req.body)
-        : req.body;
-    } catch {
-      return res.json(
-        { success: false, message: "Invalid request data." },
-        400
-      );
-    }
+try {
+  body = req.bodyJson;
+} catch (err) {
+  error("Request JSON parsing failed: " + String(err.message || err));
+
+  return res.json(
+    { success: false, message: "Invalid request data." },
+    400
+  );
+}
+
+log("Request received. Method: " + req.method);
+log("Request body parsed: " + Boolean(body));
 
     const fullName = String(body?.full_name ?? "").trim();
     const email = String(body?.email ?? "").trim().toLowerCase();
@@ -64,7 +67,7 @@ export default async ({ req, res, log, error }) => {
       status: "pending"
     });
   } catch (err) {
-    error("Membership application failed: " + String(err.message || err));
+    error("Membership application failed: " + String(err.stack || err.message || err));
 
     return res.json(
       { success: false, message: "Unable to submit your application." },
