@@ -69,7 +69,14 @@ log("Request body parsed: " + Boolean(body));
   } catch (err) {
     error("Membership application failed: " + String(err.stack || err.message || err));
 
-    return res.json(
+if (err.cause) {
+  error("Network cause: " + String(err.cause.stack || err.cause.message || err.cause));
+}
+
+if (err.cause?.cause) {
+  error("Deeper network cause: " + String(err.cause.cause.stack || err.cause.cause.message || err.cause.cause));
+}
+        return res.json(
       { success: false, message: "Unable to submit your application." },
       500
     );
