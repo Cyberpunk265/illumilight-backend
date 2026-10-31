@@ -10,21 +10,21 @@ export default async ({ req, res, log, error }) => {
       );
     }
 
-   let body;
+    let body;
 
-try {
-  body = req.bodyJson;
-} catch (err) {
-  error("Request JSON parsing failed: " + String(err.message || err));
+    try {
+      body = req.bodyJson;
+    } catch (err) {
+      error("Request JSON parsing failed: " + String(err.message || err));
 
-  return res.json(
-    { success: false, message: "Invalid request data." },
-    400
-  );
-}
+      return res.json(
+        { success: false, message: "Invalid request data." },
+        400
+      );
+    }
 
-log("Request received. Method: " + req.method);
-log("Request body parsed: " + Boolean(body));
+    log("Request received. Method: " + req.method);
+    log("Request body parsed: " + Boolean(body));
 
     const fullName = String(body?.full_name ?? "").trim();
     const email = String(body?.email ?? "").trim().toLowerCase();
@@ -54,6 +54,21 @@ log("Request body parsed: " + Boolean(body));
       data: {
         full_name: fullName,
         email,
+
+        date_of_birth: String(body?.date_of_birth ?? "").trim(),
+        nationality: String(body?.nationality ?? "").trim(),
+        country: String(body?.country ?? "").trim(),
+        city: String(body?.city ?? "").trim(),
+
+        phone: String(body?.phone ?? "").trim(),
+        whatsapp: String(body?.whatsapp ?? "").trim(),
+        contact_method: String(body?.contact_method ?? "").trim(),
+
+        membership_category: String(body?.membership_category ?? "").trim(),
+        occupation: String(body?.occupation ?? "").trim(),
+        reason: String(body?.reason ?? "").trim(),
+        heard_about: String(body?.heard_about ?? "").trim(),
+
         status: "pending"
       }
     });
@@ -66,17 +81,19 @@ log("Request body parsed: " + Boolean(body));
       application_id: application.$id,
       status: "pending"
     });
+
   } catch (err) {
     error("Membership application failed: " + String(err.stack || err.message || err));
 
-if (err.cause) {
-  error("Network cause: " + String(err.cause.stack || err.cause.message || err.cause));
-}
+    if (err.cause) {
+      error("Network cause: " + String(err.cause.stack || err.cause.message || err.cause));
+    }
 
-if (err.cause?.cause) {
-  error("Deeper network cause: " + String(err.cause.cause.stack || err.cause.cause.message || err.cause.cause));
-}
-        return res.json(
+    if (err.cause?.cause) {
+      error("Deeper network cause: " + String(err.cause.cause.stack || err.cause.cause.message || err.cause.cause));
+    }
+
+    return res.json(
       { success: false, message: "Unable to submit your application." },
       500
     );
