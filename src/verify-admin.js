@@ -3,7 +3,7 @@ const { Client, Account } = require("node-appwrite");
 
 module.exports = async ({ req, res, log, error }) => {
   try {
-    const jwt = req.headers["x-appwrite-user-jwt"];
+    const jwt = req.bodyJson?.jwt;
 
     if (!jwt) {
       return res.json({ success: false, message: "Authentication required." }, 401);
