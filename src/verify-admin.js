@@ -1,13 +1,16 @@
 
-const { Client, Account } = require("node-appwrite");
+import { Client, Account } from "node-appwrite";
 
-module.exports = async ({ req, res, log, error })  => {
+export default async ({ req, res, log, error }) => {
   try {
     const payload = JSON.parse(req.bodyText || "{}");
-const jwt = payload.jwt;
+    const jwt = payload.jwt;
 
     if (!jwt) {
-      return res.json({ success: false, message: "Authentication required." }, 401);
+      return res.json(
+        { success: false, message: "Authentication required." },
+        401
+      );
     }
 
     const client = new Client()
@@ -19,15 +22,23 @@ const jwt = payload.jwt;
     const user = await account.get();
 
     if (user.$id !== process.env.ADMIN_USER_ID) {
-      return res.json({ success: false, message: "Administrator access denied." }, 403);
+      return res.json(
+        { success: false, message: "Administrator access denied." },
+        403
+      );
     }
 
     return res.json({
       success: true,
       message: "Administrator verified."
     });
+
   } catch (err) {
     error(err.message);
-    return res.json({ success: false, message: "Verification failed." }, 401);
+
+    return res.json(
+      { success: false, message: "Verification failed." },
+      401
+    );
   }
 };
