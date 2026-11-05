@@ -1,29 +1,103 @@
 
-import { Client, Account, TablesDB, Query } from "node-appwrite";
+import {
+  Client,
+  Account,
+  TablesDB,
+  Users,
+  Query,
+  ID
+} from "node-appwrite";
+
+import { randomBytes } from "node:crypto";
+
+const jsonError = (res, message, status = 400) =>
+  res.json({ success: false, message }, status);
+
+const escapeHtml = (value = "") =>
+  String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[char]);
+
+async function sendMembershipEmail({
+  email,
+  name,
+  membershipCode,
+  password
+}) {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+
+  if (!apiKey || !senderEmail) {
+    throw new Error("Brevo configuration is incomplete.");
+  }
+
+  const response = await fetch(
+    "https://api.brevo.com/v3/smtp/email",
+    {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "api-key": apiKey,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        sender: {
+          name: "Illumilight",
+          email: senderEmail
+        },
+        to: [{ email, name }],
+        subject: "Your Illumilight Membership Is Approved",
+        htmlContent: `
+          <div style="font-family:Arial,sans-serif;color:#222;max-width:600px;margin:auto">
+            <h2 style="color:#b38a3c">Welcome to Illumilight!</h2>
+            <p>Hello ${escapeHtml(name)},</p>
+            <p>Your membership application has been approved.</p>
+            <p><strong>Membership ID:</strong> ${escapeHtml(membershipCode)}</p>
+            <p><strong>Your login email:</strong> ${escapeHtml(email)}</p>
+            <p><strong>Your generated password:</strong></p>
+            <div style="padding:15px;background:#f3f0e8;font-size:20px;word-break:break-all">
+              ${escapeHtml(password)}
+            </div>
+            <p>Use your email and password to access your Illumilight member account.</p>
+            <p>Please change your password after your first login.</p>
+            <p>Welcome aboard!<br>Illumilight Team</p>
+          </div>
+        `
+      })
+    }
+  );
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Brevo email failed (${response.status}): ${details}`);
+  }
+
+  return true;
+}
 
 export default async ({ req, res, log, error }) => {
+  let createdUserId = null;
+
   try {
-    // Read and validate the request.
     const payload =
       req.bodyJson ??
       JSON.parse(req.bodyText || "{}");
 
-    const jwt = payload.jwt;
     const action = String(payload.action || "verify_admin")
       .trim()
       .toLowerCase();
 
+    const jwt = payload.jwt;
+
     if (!jwt) {
-      return res.json(
-        {
-          success: false,
-          message: "Authentication required."
-        },
-        401
-      );
+      return jsonError(res, "Authentication required.", 401);
     }
 
-    // Verify administrator identity using the user's JWT.
+    // Verify the administrator's identity.
     const authClient = new Client()
       .setEndpoint(process.env.APPWRITE_ENDPOINT)
       .setProject(process.env.APPWRITE_PROJECT_ID)
@@ -36,16 +110,13 @@ export default async ({ req, res, log, error }) => {
       !process.env.ADMIN_USER_ID ||
       user.$id !== process.env.ADMIN_USER_ID
     ) {
-      return res.json(
-        {
-          success: false,
-          message: "Administrator access denied."
-        },
+      return jsonError(
+        res,
+        "Administrator access denied.",
         403
       );
     }
 
-    // Login verification does not require database access.
     if (action === "verify_admin") {
       return res.json({
         success: true,
@@ -53,40 +124,32 @@ export default async ({ req, res, log, error }) => {
       });
     }
 
-    // Validate server-side database configuration.
+    // Validate server-side configuration.
     const endpoint = process.env.APPWRITE_ENDPOINT;
     const projectId = process.env.APPWRITE_PROJECT_ID;
     const databaseId = process.env.APPWRITE_DATABASE_ID;
     const tableId = process.env.APPWRITE_TABLE_ID;
     const serverKey = process.env.APPWRITE_API_KEY;
 
-    if (
-      !endpoint ||
-      !projectId ||
-      !databaseId ||
-      !tableId ||
-      !serverKey
-    ) {
-      error("Appwrite database configuration is incomplete.");
-
-      return res.json(
-        {
-          success: false,
-          message: "Server configuration is incomplete."
-        },
+    if (!endpoint || !projectId || !databaseId ||
+        !tableId || !serverKey) {
+      error("Appwrite configuration is incomplete.");
+      return jsonError(
+        res,
+        "Server configuration is incomplete.",
         500
       );
     }
 
-    // Create the privileged server-side database connection.
-    const databaseClient = new Client()
+    const serverClient = new Client()
       .setEndpoint(endpoint)
       .setProject(projectId)
       .setKey(serverKey);
 
-    const tablesDB = new TablesDB(databaseClient);
+    const tablesDB = new TablesDB(serverClient);
+    const users = new Users(serverClient);
 
-    // Retrieve membership applications.
+    // Retrieve applications.
     if (action === "get_applications") {
       const result = await tablesDB.listRows({
         databaseId,
@@ -99,132 +162,169 @@ export default async ({ req, res, log, error }) => {
 
       return res.json({
         success: true,
-        message: "Applications retrieved successfully.",
         applications: result.rows
       });
     }
 
-    // Handle application approval and rejection.
+    // Approve or reject applications.
     if (action === "approve" || action === "reject") {
       const rowId = payload.rowId;
 
       if (!rowId || typeof rowId !== "string") {
-        return res.json(
-          {
-            success: false,
-            message: "A valid application ID is required."
-          },
-          400
+        return jsonError(
+          res,
+          "A valid application ID is required."
         );
       }
 
-      // Retrieve the selected application.
       const application = await tablesDB.getRow({
         databaseId,
         tableId,
         rowId
       });
 
-      // Prevent processing an application twice.
       if (
         String(application.status || "").toLowerCase() !== "pending"
       ) {
-        return res.json(
-          {
-            success: false,
-            message: "This application has already been processed."
-          },
+        return jsonError(
+          res,
+          "This application has already been processed.",
           409
         );
       }
 
-      let data;
-
-      // Reject application.
       if (action === "reject") {
-        data = {
-          status: "rejected"
-        };
-      }
-
-      // Approve application and generate membership ID.
-      if (action === "approve") {
-        const year = new Date().getFullYear();
-
-        const existing = await tablesDB.listRows({
+        const updated = await tablesDB.updateRow({
           databaseId,
           tableId,
-          queries: [
-            Query.limit(100)
-          ]
+          rowId,
+          data: { status: "rejected" }
         });
 
-        let highestNumber = 0;
-
-        const membershipPattern = new RegExp(
-          `^ILL-${year}-(\\d{4})$`
-        );
-
-        for (const row of existing.rows) {
-          const code = row.membership_code || "";
-          const match = code.match(membershipPattern);
-
-          if (match) {
-            highestNumber = Math.max(
-              highestNumber,
-              Number(match[1])
-            );
-          }
-        }
-
-        const nextNumber = String(highestNumber + 1)
-          .padStart(4, "0");
-
-        const membershipCode =
-          `ILL-${year}-${nextNumber}`;
-
-        data = {
-          status: "approved",
-          membership_code: membershipCode
-        };
+        return res.json({
+          success: true,
+          message: "Application rejected.",
+          application: updated
+        });
       }
 
-      // Save the updated application.
-      const updated = await tablesDB.updateRow({
+      // Validate applicant details.
+      const email = String(application.email || "")
+        .trim()
+        .toLowerCase();
+
+      const name = String(application.full_name || "").trim();
+
+      if (!email || !name) {
+        return jsonError(
+          res,
+          "The application is missing an email or name."
+        );
+      }
+
+      // Generate the next membership ID.
+      const year = new Date().getFullYear();
+
+      const existing = await tablesDB.listRows({
         databaseId,
         tableId,
-        rowId,
-        data
+        queries: [Query.limit(100)]
       });
+
+      let highestNumber = 0;
+
+      const membershipPattern =
+        new RegExp(`^ILL-${year}-(\\d{4})$`);
+
+      for (const row of existing.rows) {
+        const match = String(row.membership_code || "")
+          .match(membershipPattern);
+
+        if (match) {
+          highestNumber = Math.max(
+            highestNumber,
+            Number(match[1])
+          );
+        }
+      }
+
+      const membershipCode =
+        `ILL-${year}-${String(highestNumber + 1).padStart(4, "0")}`;
+
+      // Generate a strong random permanent password.
+      const password = randomBytes(24).toString("base64url");
+
+      // Create the member's Appwrite Auth account.
+      const newUser = await users.create({
+        userId: ID.unique(),
+        email,
+        password,
+        name
+      });
+
+  
+      // Link the Auth account and approve the application first.
+const updated = await tablesDB.updateRow({
+  databaseId,
+  tableId,
+  rowId,
+data: {
+  status: "approved",
+  membership_code: membershipCode,
+  user_id: createdUserId,
+  must_change_password: true
+}
+});
+
+// The account is now linked. Do not delete it if email delivery fails.
+createdUserId = null;
+
+// Send the credentials after the database update.
+await sendMembershipEmail({
+  email,
+  name,
+  membershipCode,
+  password
+});
 
       return res.json({
         success: true,
-        message: action === "approve"
-          ? "Application approved successfully."
-          : "Application rejected successfully.",
+        message: "Application approved and login credentials emailed.",
         application: updated
       });
     }
 
-    // Handle unsupported actions.
-    return res.json(
-      {
-        success: false,
-        message: `Unknown administrator action: ${action}`
-      },
-      400
+    return jsonError(
+      res,
+      `Unknown administrator action: ${action}`
     );
 
   } catch (err) {
     error(`Administrator function error: ${err.message}`);
     log("Administrator function request failed.");
 
-    return res.json(
-      {
-        success: false,
-        message: "The request could not be completed. Check the function logs."
-      },
-      500
-    );
+    // Attempt cleanup if account creation succeeded but
+    // a later step failed.
+    if (createdUserId) {
+      try {
+        const cleanupClient = new Client()
+          .setEndpoint(process.env.APPWRITE_ENDPOINT)
+          .setProject(process.env.APPWRITE_PROJECT_ID)
+          .setKey(process.env.APPWRITE_API_KEY);
+
+        const cleanupUsers = new Users(cleanupClient);
+
+        await cleanupUsers.delete({
+          userId: createdUserId
+        });
+      } catch (cleanupError) {
+        error(`Account cleanup failed: ${cleanupError.message}`);
+      }
+    }
+
+    return res.json({
+      success: false,
+      message: "The request failed. Check the function logs before retrying."
+    }, 500);
   }
 };
