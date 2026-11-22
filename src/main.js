@@ -9,12 +9,10 @@ export default async ({ req, res, log, error }) => {
 
     const db = new Databases(client);
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-
     const DB_ID = "illumilight-db";
     const COL_ID = "membership_applications";
     const action = body.action;
 
-    // Verify JWT
     if (body.jwt) {
       const userClient = new Client()
         .setEndpoint('https://fra.cloud.appwrite.io/v1')
@@ -36,20 +34,22 @@ export default async ({ req, res, log, error }) => {
       }
 
       if (action === 'approve') {
-        const rowId = body.rowId || body.applicationId || body.id;
+        const rowId = body.rowId;
         const app = await db.getDocument(DB_ID, COL_ID, rowId);
-        const randomNum = Math.floor(1000 + Math.random() * 9000);
-        const newCode = `ILL-2026-${randomNum}`;
+        const newCode = `ILL-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+
+        // FIX: FIRST NAME ONLY - Ffk Mfkfk -> Ffk
         const fullName = app.full_name || 'Member';
-        const firstName = fullName.trim().split(' ')[0];
-        const displayName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
+        const firstNameRaw = fullName.trim().split(' ')[0];
+        const displayName = firstNameRaw.charAt(0).toUpperCase() + firstNameRaw.slice(1).toLowerCase();
 
         const updated = await db.updateDocument(DB_ID, COL_ID, rowId, {
           status: 'approved',
           membership_code: newCode
         });
 
-        const htmlContent = `<html><body><div style="background:#050000;color:#fff;font-family:Arial;padding:0;margin:0;"><div style="max-width:600px;margin:0 auto;background:#050000;"><div style="background:#0d0000;border-bottom:2px solid #ff1a1a;padding:30px;text-align:center;"><div style="font-size:32px;color:#ff1a1a;">⛧</div><div style="font-size:24px;letter-spacing:4px;font-weight:bold;">ILLUM<span style="color:#ff1a1a;">INATI</span></div><div style="font-size:10px;letter-spacing:4px;color:#8a5555;">OUT OF THE DARK, INTO THE LIGHT</div></div><div style="padding:32px 24px;text-align:center;"><div style="font-size:12px;letter-spacing:3px;color:#ff1a1a;">WELCOME TO THE CIRCLE ⛧</div><h1 style="font-size:26px;">Welcome, ${displayName}</h1><p style="color:#aaa;font-size:14px;">Your membership has been sealed.</p><div style="background:#140000;border:1px solid #ff1a1a;border-radius:16px;padding:22px;margin:20px 0;"><div style="font-size:10px;letter-spacing:3px;color:#9a6a6a;">YOUR CODE</div><div style="font-size:28px;font-weight:900;font-family:monospace;white-space:nowrap;">${newCode}</div></div><a href="https://illumilight.co.za/dodis/dodis.html" style="display:inline-block;background:#ff1a1a;color:#fff;padding:14px 30px;border-radius:99px;text-decoration:none;font-weight:bold;">SHOP @ DODIS ⛧</a></div></div></div></body></html>`;
+        // YOUR ORIGINAL DODIS TEMPLATE from screenshot, but with first name only
+        const htmlContent = `<div style="background:#050000;color:#fff;font-family:Arial,sans-serif;padding:0;margin:0;"><div style="max-width:600px;margin:0 auto;background:#050000;"><div style="background:#0d0000;border-bottom:2px solid #ff1a1a;padding:32px 20px;text-align:center;"><div style="color:#ff1a1a;font-size:32px;">✹</div><div style="font-size:32px;letter-spacing:6px;font-weight:900;margin-top:8px;">ILLUMI<span style="color:#ff1a1a;">LIGHT</span></div><div style="font-size:13px;letter-spacing:4px;color:#c9a9a9;margin-top:6px;">DODIS • DEPARTMENT OF<br>DISTRIBUTION</div></div><div style="padding:36px 24px;text-align:center;"><div style="font-size:13px;letter-spacing:4px;color:#ff1a1a;">WELCOME TO THE CIRCLE ✹</div><h1 style="font-size:32px;margin:16px 0 10px;">Welcome, ${displayName}</h1><p style="color:#ddd;font-size:16px;">Your membership has been sealed.<br>From the depths, relics arise.</p><div style="background:#140000;border:1px solid #ff1a1a;border-radius:16px;padding:26px 18px;margin:28px 0;"><div style="font-size:11px;letter-spacing:3px;color:#9a6a6a;">YOUR MEMBERSHIP CODE</div><div style="font-size:38px;font-weight:900;letter-spacing:2px;margin:10px 0;">${newCode}</div><div style="color:#4ade80;font-size:14px;">● ACTIVE • R650 TESTAMENT UNLOCKED</div></div><a href="https://illumilight.co.za/dodis/dodis.html" style="display:inline-block;background:#ff1a1a;color:#fff;padding:14px 30px;border-radius:99px;text-decoration:none;font-weight:bold;">SHOP @ DODIS ✹</a><p style="color:#555;font-size:11px;margin-top:24px;">AVE SATANAS • 666 • Johannesburg</p></div></div></div>`;
 
         await fetch('https://api.brevo.com/v3/smtp/email', {
           method: 'POST',
@@ -57,7 +57,7 @@ export default async ({ req, res, log, error }) => {
           body: JSON.stringify({
             sender: { name: 'ILLUMILIGHT', email: 'noreply@illumilight.co.za' },
             to: [{ email: app.email, name: displayName }],
-            subject: `Welcome to IllumiLight ⛧ Your Code ${newCode}`,
+            subject: `Welcome to IllumiLight ✹ Your Code ${newCode}`,
             htmlContent: htmlContent
           })
         });
@@ -66,12 +66,10 @@ export default async ({ req, res, log, error }) => {
       }
 
       if (action === 'reject') {
-        const rowId = body.rowId || body.applicationId || body.id;
-        const updated = await db.updateDocument(DB_ID, COL_ID, rowId, { status: 'rejected' });
+        const updated = await db.updateDocument(DB_ID, COL_ID, body.rowId, { status: 'rejected' });
         return res.json({ success: true, application: updated });
       }
     }
-
     return res.json({ success: false, message: 'Invalid request' }, 400);
   } catch (e) {
     error('FAILED: ' + e.message);
